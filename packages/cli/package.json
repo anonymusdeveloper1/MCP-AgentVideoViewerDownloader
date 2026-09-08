@@ -1,0 +1,21 @@
+{
+  "name": "avv",
+  "version": "0.1.0",
+  "description": "Download, convert, and watch videos from the command line - built for humans and AI agents.",
+  "type": "module",
+  "license": "MIT",
+  "engines": { "node": ">=20" },
+  "bin": { "avv": "./dist/index.js" },
+  "main": "./dist/index.js",
+  "files": ["dist"],
+  "keywords": ["video", "youtube", "download", "convert", "yt-dlp", "ffmpeg", "whisper", "cli"],
+  "scripts": {
+    "build": "tsc --build && chmod +x dist/index.js",
+    "clean": "rm -rf dist *.tsbuildinfo",
+    "start": "node dist/index.js"
+  },
+  "dependencies": {
+    "@avv/core": "*",
+    "commander": "^15.0.0"
+  }
+}

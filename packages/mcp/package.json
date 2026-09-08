@@ -1,0 +1,22 @@
+{
+  "name": "avv-mcp",
+  "version": "0.1.0",
+  "description": "MCP server that lets AI agents download, convert, and actually watch videos.",
+  "type": "module",
+  "license": "MIT",
+  "engines": { "node": ">=20" },
+  "bin": { "avv-mcp": "./dist/index.js" },
+  "main": "./dist/index.js",
+  "files": ["dist"],
+  "keywords": ["mcp", "model-context-protocol", "video", "youtube", "yt-dlp", "ffmpeg", "whisper", "transcription"],
+  "scripts": {
+    "build": "tsc --build && chmod +x dist/index.js",
+    "clean": "rm -rf dist *.tsbuildinfo",
+    "start": "node dist/index.js"
+  },
+  "dependencies": {
+    "@avv/core": "*",
+    "@modelcontextprotocol/sdk": "^1.30.0",
+    "zod": "^4.5.4"
+  }
+}

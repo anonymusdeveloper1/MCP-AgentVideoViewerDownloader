@@ -1,0 +1,53 @@
+# dependencies
+node_modules/
+.pnp
+.pnp.js
+
+# build output
+dist/
+build/
+*.tsbuildinfo
+
+# test / coverage
+coverage/
+.nyc_output/
+
+# vendored runtime binaries (downloaded on demand)
+vendor/
+.avv-cache/
+
+# media scratch — never commit downloaded video
+*.mp4
+*.mkv
+*.webm
+*.mov
+*.mp3
+*.m4a
+*.wav
+*.opus
+*.flac
+*.srt
+*.vtt
+tmp/
+scratch/
+
+# env / secrets
+.env
+.env.*
+!.env.example
+
+# macOS
+.DS_Store
+._*
+.Spotlight-V100
+.Trashes
+
+# editors
+.idea/
+.vscode/*
+!.vscode/extensions.json
+*.swp
+
+# logs
+*.log
+npm-debug.log*
