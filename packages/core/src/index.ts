@@ -14,7 +14,7 @@ export {
 } from "./paths.js";
 export {
   resolveFfmpeg, resolveYtDlp, resolveWhisper, resolveWhisperModel,
-  checkTools, installYtDlpViaBrew, isStandaloneYtDlp,
+  checkTools, installYtDlpViaBrew, isStandaloneYtDlp, supportsDrawtext, resolveDrawtextFfmpeg,
   type ToolName, type ToolStatus,
 } from "./binaries.js";
 export { resolveSource, isPrivateAddress, sourceLabel, type Source } from "./source.js";

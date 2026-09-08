@@ -36,13 +36,13 @@ the whole point of the split is that the CLI and MCP server cannot drift apart.
 | `core/src/exec.ts` | **The only place a process is spawned.** Timeouts, process-group kills, line-wise progress. |
 | `core/src/source.ts` | Is this a URL or a file? SSRF guard lives here. |
 | `core/src/paths.ts` | Allow-list confinement, filename sanitising, disk-space checks, timestamp formatting. |
-| `core/src/binaries.ts` | Finding and provisioning ffmpeg / yt-dlp / whisper + models. |
+| `core/src/binaries.ts` | Finding, provisioning and health-checking ffmpeg / yt-dlp / whisper + models. Capability probes (drawtext) live here. |
 | `core/src/config.ts` | Every `AVV_*` environment variable, in one place. |
 | `core/src/errors.ts` | `AvvError` with a `code` and a `remediation`. |
 | `core/src/probe.ts` | Metadata via ffprobe (local) and yt-dlp (remote). Duration/filesize guards. |
 | `core/src/download.ts` | yt-dlp orchestration, quality tiers, playlists, sections. |
 | `core/src/convert.ts` | Format conversion, clipping, speech-wav prep for Whisper. |
-| `core/src/frames.ts` | Frame sampling, contact sheets, drawtext capability probe. |
+| `core/src/frames.ts` | Frame sampling, timestamp burn-in, contact sheets. |
 | `core/src/transcribe.ts` | whisper.cpp, plus SRT/VTT/grouped-text rendering. |
 | `core/src/watch.ts` | The orchestrator that fuses download + frames + transcript. |
 
@@ -184,10 +184,19 @@ whole classes of breakage that typechecking cannot.
 These were all found the hard way on macOS. They are handled at runtime rather than
 documented away, but you should know they exist before you "fix" the code that handles them.
 
-**Homebrew's ffmpeg has no `drawtext` filter.** The bottle is built without libfreetype, so
-burning timestamps onto frames fails with `No such filter: 'drawtext'`. `frames.ts` probes for
-it and falls back to unlabelled frames, telling the caller to match frames to times by
-position. Do not remove that probe assuming ffmpeg is uniform across machines.
+**Homebrew's plain ffmpeg has no `drawtext` filter.** The bottle is built without libfreetype,
+so burning timestamps onto frames fails with `No such filter: 'drawtext'`. `resolveDrawtextFfmpeg()`
+in `binaries.ts` probes the active binary and, if it cannot draw text, falls back to a keg-only
+`ffmpeg-full` when one is installed. Failing that, frames come back unlabelled and the response
+tells the caller to match by position. Do not remove those probes assuming ffmpeg is uniform
+across machines — it is not, even between two Homebrew formulae on the same box.
+
+**A Homebrew upgrade can break a binary in place.** Installing `ffmpeg-full` bumped x265, and
+the existing `ffmpeg` was linked against a `libx265` that no longer existed — still sitting on
+PATH, still `which`-able, dying on every invocation. `checkTools()` therefore *executes* each
+binary rather than merely locating it, and recognises loader failures specifically so it can
+say `brew reinstall ffmpeg` instead of a generic error. Keep that behaviour if you touch
+`doctor`: a health check that only tests for file existence is not a health check.
 
 **The standalone yt-dlp binary costs ~11 seconds per invocation.** It is a PyInstaller bundle
 that re-extracts its embedded Python on *every* run, not just the first. Homebrew's build

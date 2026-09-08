@@ -15,7 +15,7 @@ import {
   extractFrames,
   transcribe, formatTranscript,
   watch, renderWatchText, watchHeadline,
-  checkTools, resolveYtDlp, resolveWhisperModel, installYtDlpViaBrew,
+  checkTools, resolveYtDlp, resolveWhisperModel, installYtDlpViaBrew, resolveFfmpeg, resolveDrawtextFfmpeg,
   humanBytes, formatTimestamp,
   type TargetFormat, type Quality, type TranscriptFormat, type FrameMode, type ImageFormat,
 } from "@avv/core";
@@ -393,8 +393,26 @@ program
       out("Toolchain");
       for (const t of tools) {
         const status = t.found ? "  ok     " : "  MISSING";
-        out(`${status} ${t.name.padEnd(8)} ${t.found ? `${t.version ?? ""} ${t.path ?? ""}`.trim() : `install with: ${t.hint}`}`);
+        const detail = t.found
+          ? `${t.version ?? ""} ${t.path ?? ""}`.trim()
+          : t.path
+            ? t.hint // present but broken: the hint states its own fix
+            : `install with: ${t.hint}`;
+        out(`${status} ${t.name.padEnd(8)} ${detail}`);
       }
+      // Whether frames can carry burned-in timestamps is the one capability
+      // that silently changes the shape of what an agent receives, so it is
+      // worth stating rather than leaving to be discovered.
+      const drawtext = await resolveFfmpeg("ffmpeg").then(resolveDrawtextFfmpeg).catch(() => null);
+      out("");
+      out("Capabilities");
+      out(
+        drawtext
+          ? "  frame timestamps  on - drawn onto each frame"
+          : "  frame timestamps  off - this ffmpeg has no drawtext filter (built without libfreetype).\n" +
+            "                    Frames are returned unlabelled and matched to times by position.\n" +
+            "                    To enable: brew install ffmpeg-full && export AVV_FFMPEG_PATH=$(brew --prefix ffmpeg-full)/bin/ffmpeg",
+      );
       out("");
       out("Configuration");
       out(`  downloads      ${cfg.downloadDir}`);

@@ -17,7 +17,7 @@ import {
   extractFrames, frameToBase64, mimeFor,
   transcribe, formatTranscript, toTimestampedText,
   watch, renderWatchText,
-  checkTools, humanBytes, formatTimestamp,
+  checkTools, resolveFfmpeg, resolveDrawtextFfmpeg, humanBytes, formatTimestamp,
   type Frame, type ImageFormat, type TargetFormat, type Quality,
 } from "@avv/core";
 
@@ -420,9 +420,22 @@ server.registerTool(
       const tools = await checkTools(cfg);
       const lines = tools.map((t) => {
         const mark = t.found ? "OK  " : "MISSING";
-        const detail = t.found ? `${t.version ?? ""} (${t.path})` : `- install with: ${t.hint}`;
+        const detail = t.found
+          ? `${t.version ?? ""} (${t.path})`
+          : t.path
+            ? `- ${t.hint}`
+            : `- install with: ${t.hint}`;
         return `${mark.padEnd(8)} ${t.name.padEnd(8)} ${detail}`;
       });
+      const drawtext = await resolveFfmpeg("ffmpeg").then(resolveDrawtextFfmpeg).catch(() => null);
+      lines.push("");
+      lines.push(
+        drawtext
+          ? "Frame timestamps: drawn onto each frame."
+          : "Frame timestamps: NOT drawn onto frames - this ffmpeg lacks the drawtext filter. " +
+            "Frames come back unlabelled; match the Nth image to the Nth entry in the frame list. " +
+            "To enable: brew install ffmpeg-full, then set AVV_FFMPEG_PATH to its ffmpeg.",
+      );
       lines.push("");
       lines.push(`Downloads:     ${cfg.downloadDir}`);
       lines.push(`Cache:         ${cfg.home}`);

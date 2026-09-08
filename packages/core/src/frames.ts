@@ -2,7 +2,7 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { AvvError } from "./errors.js";
 import { run } from "./exec.js";
-import { resolveFfmpeg } from "./binaries.js";
+import { resolveFfmpeg, resolveDrawtextFfmpeg } from "./binaries.js";
 import { resolveSource } from "./source.js";
 import { probe, type VideoInfo } from "./probe.js";
 import { download } from "./download.js";
@@ -78,27 +78,6 @@ const FONT_CANDIDATES = [
 ];
 
 let cachedFont: string | null | undefined;
-let cachedDrawtext: boolean | undefined;
-
-/**
- * Does this ffmpeg have the drawtext filter?
- *
- * It requires libfreetype at build time, and plenty of distributed builds omit
- * it - Homebrew's current bottle among them. Asking up front lets timestamp
- * burn-in degrade to plain unlabelled frames instead of failing every extract
- * with "No such filter: 'drawtext'".
- */
-async function supportsDrawtext(ffmpeg: string): Promise<boolean> {
-  if (cachedDrawtext !== undefined) return cachedDrawtext;
-  try {
-    const r = await run(ffmpeg, ["-hide_banner", "-filters"], { timeoutMs: 15_000, throwOnNonZero: false });
-    cachedDrawtext = /^\s*\S+\s+drawtext\s/m.test(r.stdout);
-  } catch {
-    cachedDrawtext = false;
-  }
-  return cachedDrawtext;
-}
-
 async function findFont(): Promise<string | null> {
   if (cachedFont !== undefined) return cachedFont;
   for (const f of FONT_CANDIDATES) {
@@ -233,15 +212,19 @@ export async function extractFrames(opts: FrameOptions, cfg: AvvConfig): Promise
         ? uniformTimestamps(duration, capped)
         : [];
 
-  // Labels need both a usable font file and an ffmpeg that can draw text.
-  const font = label && (await supportsDrawtext(ffmpeg)) ? await findFont() : null;
+  // Labels need both a font file and an ffmpeg built with freetype. Since the
+  // label is drawn during extraction, a capable binary has to run the whole
+  // command - not just the drawtext part.
+  const labelFfmpeg = label ? await resolveDrawtextFfmpeg(ffmpeg) : null;
+  const font = labelFfmpeg ? await findFont() : null;
   const labelled = font !== null;
+  const activeFfmpeg = labelled && labelFfmpeg ? labelFfmpeg : ffmpeg;
   const timeoutMs = (opts.timeoutSec ?? cfg.timeoutSec) * 1000;
 
   const frames: Frame[] =
     times.length > 0
-      ? await extractAtTimes({ ffmpeg, localVideoPath, times, dir, format, quality, maxWidth, font, timeoutMs, signal, onProgress })
-      : await extractByFilter({ ffmpeg, localVideoPath, mode, dir, format, quality, maxWidth, count: capped, duration, timeoutMs, signal });
+      ? await extractAtTimes({ ffmpeg: activeFfmpeg, localVideoPath, times, dir, format, quality, maxWidth, font, timeoutMs, signal, onProgress })
+      : await extractByFilter({ ffmpeg: activeFfmpeg, localVideoPath, mode, dir, format, quality, maxWidth, count: capped, duration, timeoutMs, signal });
 
   if (!frames.length) {
     throw new AvvError(
@@ -256,7 +239,7 @@ export async function extractFrames(opts: FrameOptions, cfg: AvvConfig): Promise
 
   let contactSheetPath: string | undefined;
   if (contactSheet && frames.length > 1) {
-    contactSheetPath = await buildContactSheet(ffmpeg, frames, dir, format, quality, timeoutMs, signal);
+    contactSheetPath = await buildContactSheet(activeFfmpeg, frames, dir, format, quality, timeoutMs, signal);
   }
 
   return {

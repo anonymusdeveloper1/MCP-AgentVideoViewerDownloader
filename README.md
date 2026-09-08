@@ -226,12 +226,28 @@ packages/
   cli/src/index.ts  commander front-end
 ```
 
-### Known environment quirk
+### Frame timestamps
 
-Homebrew's current ffmpeg bottle is built **without libfreetype**, so it has no `drawtext`
-filter and timestamps cannot be burned onto frames. `avv` detects this at runtime and falls
-back to unlabelled frames, noting in its response that the agent should match frames to times
-by position instead. To get burned-in labels, install an ffmpeg built with freetype.
+Frames carry their timestamp burned into the corner, which lets a model anchor what it sees
+to when it happened without counting image positions.
+
+This needs ffmpeg's `drawtext` filter, which needs libfreetype at build time — and Homebrew's
+plain `ffmpeg` bottle is built without it. So `avv` looks for a capable build:
+
+```bash
+brew install ffmpeg-full
+```
+
+It is keg-only (installed outside PATH), and `avv` finds it automatically — no configuration.
+If no capable ffmpeg exists, frames come back unlabelled and the response says so, telling the
+caller to match the Nth image to the Nth entry in the frame list.
+
+`avv doctor` reports which mode you are in under **Capabilities**.
+
+> **Careful:** installing `ffmpeg-full` upgrades shared libraries (x265 among them) and can
+> leave an older `ffmpeg` pointing at a `.dylib` that no longer exists. If ffmpeg suddenly
+> fails with `Library not loaded`, run `brew reinstall ffmpeg`. `avv doctor` detects this
+> exact case and prints the fix.
 
 ## Licence
 

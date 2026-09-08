@@ -59,6 +59,61 @@ export async function resolveFfmpeg(kind: "ffmpeg" | "ffprobe" = "ffmpeg"): Prom
   );
 }
 
+const drawtextCache = new Map<string, boolean>();
+
+/**
+ * Does this ffmpeg have the drawtext filter?
+ *
+ * It needs libfreetype at build time and plenty of distributed builds omit it -
+ * Homebrew's plain `ffmpeg` bottle among them, while `ffmpeg-full` includes it.
+ * Asking first lets timestamp burn-in degrade to unlabelled frames rather than
+ * failing every extraction with "No such filter: 'drawtext'".
+ *
+ * Cached per binary path, so pointing AVV_FFMPEG_PATH at a different build in
+ * the same process gets a fresh answer instead of the previous one.
+ */
+export async function supportsDrawtext(bin: string): Promise<boolean> {
+  const cached = drawtextCache.get(bin);
+  if (cached !== undefined) return cached;
+  let ok = false;
+  try {
+    const r = await run(bin, ["-hide_banner", "-filters"], { timeoutMs: 15_000, throwOnNonZero: false });
+    ok = /^\s*\S+\s+drawtext\s/m.test(r.stdout);
+  } catch {
+    ok = false;
+  }
+  drawtextCache.set(bin, ok);
+  return ok;
+}
+
+/**
+ * Keg-only ffmpeg builds that ship with libfreetype, checked when the ffmpeg on
+ * PATH cannot draw text. Homebrew installs `ffmpeg-full` outside PATH by
+ * design, so without this the user would have to know about libfreetype and set
+ * AVV_FFMPEG_PATH by hand just to get timestamps on their frames.
+ */
+const FREETYPE_FFMPEG_CANDIDATES = [
+  "/opt/homebrew/opt/ffmpeg-full/bin/ffmpeg",
+  "/usr/local/opt/ffmpeg-full/bin/ffmpeg",
+];
+
+/**
+ * Find an ffmpeg that can burn text into a frame.
+ *
+ * Prefers the one already in use so a single binary handles everything; only
+ * looks further if that one was built without freetype. Returns null when no
+ * capable build exists, which is the signal to fall back to unlabelled frames.
+ */
+export async function resolveDrawtextFfmpeg(primary: string): Promise<string | null> {
+  if (await supportsDrawtext(primary)) return primary;
+  for (const candidate of FREETYPE_FFMPEG_CANDIDATES) {
+    if (candidate === primary) continue;
+    if (!(await exists(candidate))) continue;
+    if (await supportsDrawtext(candidate)) return candidate;
+  }
+  return null;
+}
+
 /* ------------------------------------------------------------------- yt-dlp */
 
 function ytDlpAssetName(): string | undefined {
@@ -231,16 +286,51 @@ async function downloadFile(url: string, dest: string, label: string): Promise<v
 
 /* ------------------------------------------------------------------- doctor */
 
-async function versionOf(bin: string, args: string[], pick: (out: string) => string): Promise<string | undefined> {
-  try {
-    const r = await run(bin, args, { timeoutMs: 60_000, throwOnNonZero: false });
-    return pick(`${r.stdout}\n${r.stderr}`).trim() || undefined;
-  } catch {
-    return undefined;
-  }
+const firstLine = (s: string) => s.split("\n")[0] ?? "";
+
+/**
+ * A binary that exists on disk but cannot dynamically link.
+ *
+ * Upgrading one Homebrew formula can bump a shared library out from under
+ * another - installing ffmpeg-full moved x265, leaving the existing ffmpeg
+ * pointing at a libx265 that no longer existed. The binary is still right
+ * there on PATH, so a presence check calls it healthy while every actual
+ * invocation dies.
+ */
+function isLoaderFailure(output: string): boolean {
+  return /Library not loaded|image not found|cannot open shared object|dyld\[/i.test(output);
 }
 
-const firstLine = (s: string) => s.split("\n")[0] ?? "";
+interface BinaryHealth {
+  runs: boolean;
+  version?: string | undefined;
+  failure?: string | undefined;
+}
+
+/**
+ * Actually execute a binary rather than just locating it.
+ *
+ * Some tools exit non-zero for `--help` or `--version`, so producing real
+ * output counts as running. What does not count is a loader failure, which is
+ * the case a presence check silently misses.
+ */
+async function inspectBinary(bin: string, args: string[]): Promise<BinaryHealth> {
+  try {
+    const r = await run(bin, args, { timeoutMs: 60_000, throwOnNonZero: false });
+    const combined = `${r.stdout}\n${r.stderr}`;
+    if (isLoaderFailure(combined)) {
+      const line = combined.split("\n").find((l) => /Library not loaded/i.test(l))?.trim();
+      return { runs: false, failure: line ?? "failed to load a shared library" };
+    }
+    const version = firstLine(r.stdout).trim();
+    return {
+      runs: r.code === 0 || combined.trim().length > 0,
+      ...(version ? { version } : {}),
+    };
+  } catch (e) {
+    return { runs: false, failure: e instanceof Error ? e.message : String(e) };
+  }
+}
 
 /** Report on every external dependency. Backs both `avv doctor` and the MCP health tool. */
 export async function checkTools(cfg: AvvConfig): Promise<ToolStatus[]> {
@@ -248,31 +338,44 @@ export async function checkTools(cfg: AvvConfig): Promise<ToolStatus[]> {
 
   for (const kind of ["ffmpeg", "ffprobe"] as const) {
     const found = await which(kind);
-    const version = found ? await versionOf(found, ["-version"], firstLine) : undefined;
+    const health = found ? await inspectBinary(found, ["-version"]) : undefined;
+    const healthy = Boolean(found) && health?.runs === true;
     out.push({
       name: kind,
-      found: Boolean(found),
+      found: healthy,
       ...(found ? { path: found } : {}),
-      ...(version ? { version } : {}),
+      ...(health?.version ? { version: health.version } : {}),
       autoInstallable: false,
-      ...(found ? {} : { hint: "brew install ffmpeg" }),
+      ...(healthy
+        ? {}
+        : {
+            hint: found
+              ? `present at ${found} but will not run (${health?.failure ?? "unknown error"}). ` +
+                `A dependency upgrade likely broke its links - fix with: brew reinstall ${kind === "ffprobe" ? "ffmpeg" : kind}`
+              : "brew install ffmpeg",
+          }),
     });
   }
 
   const ytdlp = (await which("yt-dlp")) ?? (await cachedYtDlp(cfg));
   const slowStandalone = ytdlp !== undefined && isStandaloneYtDlp(ytdlp, cfg);
-  const ytdlpVersion = ytdlp ? await versionOf(ytdlp, ["--version"], firstLine) : undefined;
+  const ytdlpHealth = ytdlp ? await inspectBinary(ytdlp, ["--version"]) : undefined;
+  const ytdlpHealthy = Boolean(ytdlp) && ytdlpHealth?.runs === true;
   out.push({
     name: "yt-dlp",
-    found: Boolean(ytdlp),
+    found: ytdlpHealthy,
     ...(ytdlp ? { path: ytdlp } : {}),
-    ...(ytdlpVersion ? { version: ytdlpVersion } : {}),
+    ...(ytdlpHealth?.version ? { version: ytdlpHealth.version } : {}),
     autoInstallable: true,
-    ...(ytdlp
+    ...(ytdlpHealthy
       ? slowStandalone
         ? { hint: "standalone build: ~11s startup per call. `brew install yt-dlp` is ~40x faster." }
         : {}
-      : { hint: "auto-installed on first use, or: brew install yt-dlp" }),
+      : {
+          hint: ytdlp
+            ? `present at ${ytdlp} but will not run (${ytdlpHealth?.failure ?? "unknown error"}). Fix with: brew reinstall yt-dlp`
+            : "auto-installed on first use, or: brew install yt-dlp",
+        }),
   });
 
   let whisper: string | undefined;
@@ -280,17 +383,24 @@ export async function checkTools(cfg: AvvConfig): Promise<ToolStatus[]> {
     whisper = await which(name);
     if (whisper) break;
   }
+  const whisperHealth = whisper ? await inspectBinary(whisper, ["--help"]) : undefined;
+  const whisperHealthy = Boolean(whisper) && whisperHealth?.runs === true;
   out.push({
     name: "whisper",
-    found: Boolean(whisper),
+    found: whisperHealthy,
     ...(whisper ? { path: whisper } : {}),
     autoInstallable: false,
-    ...(whisper ? {} : { hint: "brew install whisper-cpp" }),
+    ...(whisperHealthy
+      ? {}
+      : {
+          hint: whisper
+            ? `present at ${whisper} but will not run (${whisperHealth?.failure ?? "unknown error"}). Fix with: brew reinstall whisper-cpp`
+            : "brew install whisper-cpp",
+        }),
   });
 
   return out;
 }
-
 async function cachedYtDlp(cfg: AvvConfig): Promise<string | undefined> {
   const p = path.join(cachePaths(cfg).bin, os.platform() === "win32" ? "yt-dlp.exe" : "yt-dlp");
   return (await exists(p)) ? p : undefined;
