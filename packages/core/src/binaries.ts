@@ -248,11 +248,12 @@ export async function checkTools(cfg: AvvConfig): Promise<ToolStatus[]> {
 
   for (const kind of ["ffmpeg", "ffprobe"] as const) {
     const found = await which(kind);
+    const version = found ? await versionOf(found, ["-version"], firstLine) : undefined;
     out.push({
       name: kind,
       found: Boolean(found),
       ...(found ? { path: found } : {}),
-      ...(found ? { version: await versionOf(found, ["-version"], firstLine) } : {}),
+      ...(version ? { version } : {}),
       autoInstallable: false,
       ...(found ? {} : { hint: "brew install ffmpeg" }),
     });
@@ -260,11 +261,12 @@ export async function checkTools(cfg: AvvConfig): Promise<ToolStatus[]> {
 
   const ytdlp = (await which("yt-dlp")) ?? (await cachedYtDlp(cfg));
   const slowStandalone = ytdlp !== undefined && isStandaloneYtDlp(ytdlp, cfg);
+  const ytdlpVersion = ytdlp ? await versionOf(ytdlp, ["--version"], firstLine) : undefined;
   out.push({
     name: "yt-dlp",
     found: Boolean(ytdlp),
     ...(ytdlp ? { path: ytdlp } : {}),
-    ...(ytdlp ? { version: await versionOf(ytdlp, ["--version"], firstLine) } : {}),
+    ...(ytdlpVersion ? { version: ytdlpVersion } : {}),
     autoInstallable: true,
     ...(ytdlp
       ? slowStandalone

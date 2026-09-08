@@ -26,7 +26,7 @@ export type AvvErrorCode =
 export class AvvError extends Error {
   readonly code: AvvErrorCode;
   readonly remediation: string;
-  readonly details?: Record<string, unknown>;
+  readonly details?: Record<string, unknown> | undefined;
 
   constructor(
     code: AvvErrorCode,
